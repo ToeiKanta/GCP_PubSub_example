@@ -1,14 +1,14 @@
 import logging
 import time
 import multiprocessing
-
+from google.api_core import retry
 from google.cloud import pubsub_v1
-
-
+from .consts import consts
+# https://towardsdatascience.com/a-python-implementation-of-concurrent-consumers-for-google-cloud-platform-pub-sub-991ae8b9841d 
 ACK_DEADLINE_SECONDS         = 500 # 500 seconds to renew the ack window
-ACK_DEADLINE_TIMES           = 20   # times to renuew the ack window
+ACK_DEADLINE_TIMES           = 20   # times to renuew the ack window [this will handle video process time <= ACK_DEADLINE_SECONDS*ACK_DEADLINE_TIMES secs]
 ACK_DEADLINE_BUFFER_SECONDS  = 200
-ACK_SLEEP_INTERVALS_SECONDS  = 30
+ACK_SLEEP_INTERVALS_SECONDS  = 30 #  ACK_DEADLINE_SECONDS should greater than ACK_SLEEP_INTERVALS_SECONDS
 SCHEDULE_INTERVAL_SECONDS    = 60
 
 
@@ -43,9 +43,12 @@ def process_worker_alive(workers, worker, subscriber, subscription_path, total_t
         # total ack time window would be roughly ACK_DEADLINE_SECONDS * (ACK_DEADLINE_TIMES + 1)
         if renew_count < ACK_DEADLINE_TIMES:
             subscriber.modify_ack_deadline(
-                subscription_path,
-                [ack_id],
-                ack_deadline_seconds = ACK_DEADLINE_SECONDS
+                request={
+                    "subscription": subscription_path,
+                    "ack_ids": [ack_id],
+                    # Must be between 10 and 600.
+                    "ack_deadline_seconds": ACK_DEADLINE_SECONDS,
+                }
             )
 
             logging.info("renewing the ack window for msg %s for %d time with worker %d" % (
@@ -64,9 +67,12 @@ def process_worker_alive(workers, worker, subscriber, subscription_path, total_t
 # ack window before it becomes to outstanding
 def process_messages(fn, subscriber, subscription_path):
 
-    response = subscriber.pull(subscription_path,
-                                   max_messages=8,
-                                   return_immediately = True)
+    # response = subscriber.pull(subscription_path, max_messages=8, return_immediately = True)
+    response = subscriber.pull(
+        request={"subscription": subscription_path, "max_messages": 8 , "return_immediately": True},
+        # retry=retry.Retry(deadline=300),
+        
+    )
     if not response.received_messages:
         logging.debug("no message to consume...retry after schedule interval")
         return
@@ -80,8 +86,7 @@ def process_messages(fn, subscriber, subscription_path):
 
             # total ack time window would be ACK_DEADLINE_SECONDS * ACK_DEADLINE_TIMES
             if worker.is_alive():
-                process_worker_alive(workers, worker, subscriber,
-                                     subscription_path, total_time)
+                process_worker_alive(workers, worker, subscriber, subscription_path, total_time)
             else:
                 # ack the message since it is already finished
                 # deal with exit code in the future
@@ -90,7 +95,7 @@ def process_messages(fn, subscriber, subscription_path):
                 err_msg = return_info.get("err_msg", "unknown")
                 if status in [consts.DONE_STATUS]:
                     # task completed successfully, acknowledge the message
-                    subscriber.acknowledge(subscription_path, [ack_id])
+                    subscriber.acknowledge(request={"subscription": subscription_path, "ack_ids": [ack_id]})
                 else:
                     # task is not completed, do not acknowledge the message
                     logging.error("failed to process message error num %s err msg %s" % (status, err_msg))
@@ -107,6 +112,8 @@ def process_messages(fn, subscriber, subscription_path):
 
 def connect_to_queue():
     subscriber = pubsub_v1.SubscriberClient.from_service_account_json(consts.PUBSUB_INFO['gcp_keyfile'])
+    # The `subscription_path` method creates a fully qualified identifier
+    # in the form `projects/{project_id}/subscriptions/{subscription_id}`
     subscription_path = subscriber.subscription_path(
                             consts.PUBSUB_INFO['project_id'],
                             consts.PUBSUB_INFO['subscription_name']

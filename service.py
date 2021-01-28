@@ -1,6 +1,7 @@
 import logging
-
+from internal.consts import consts
 from internal.subscriber import listen
+import time
 
 def record_job_status(message, status, err_msg, return_vals):
     # return_vals is for communication with worker
@@ -8,29 +9,32 @@ def record_job_status(message, status, err_msg, return_vals):
     return_vals['err_msg'] = err_msg
 
     # may also consider recording the job status in your mysql database
-    update_job_status(message, status)  # not implement
+    # update_job_status(message, status)  # not implement
 
+def run_step1(msg):
+    logging.info("[run step 1] message : %s\n", msg)
+    t_end = time.time() + 20
+    while time.time() < t_end:
+        # do whatever you do
+        pass
+    status = consts.DONE_STATUS
+    err_msg = ""
+    return status, err_msg
 
 @listen
 def start_service(return_vals, message):
     try:
-        logging.info("Processing message: \n%s" % message.message.data)
+        logging.info("Processing message: %s" % message.message.data)
 
         status, err_msg = run_step1(message.message.data)
-        if status!=None:
+        if status!= consts.DONE_STATUS:
             logging.error("Failed to run step1!")
             record_job_status(message, status, err_msg, return_vals)
             return
 
-        status, err_msg = run_step2(message.message.data)
-        if status!=None:
-            logging.error("Failed to run step2!")
-            record_job_status(message, status, err_msg, return_vals)
-            return
-
-        logging.info("Message completely processed: \n%s" % message.message.data)
+        logging.info("Message completely processed: %s" % message.message.data)
         # may also consider recording the job status in your mysql database
-        update_job_status(message, "DONE")  # not implement
+        # update_job_status(message, "DONE")  # not implement
 
         return_vals['status'] = consts.DONE_STATUS
         return_vals['err_msg'] = ""
@@ -40,7 +44,7 @@ def start_service(return_vals, message):
         return_vals['err_msg'] = "unknown"
 
         # may also consider recording the job status in your mysql database
-        update_job_status(message, "FAILED")  # not implement
+        # update_job_status(message, "FAILED")  # not implement
         raise
 
 if __name__=='__main__':

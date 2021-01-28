@@ -1,5 +1,6 @@
 import logging
 from google.cloud import pubsub_v1
+from .consts import consts
 
 def get_callback(api_future, data):
     """Wrap message data in the context of the callback function."""
