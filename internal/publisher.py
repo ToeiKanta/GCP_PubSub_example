@@ -45,7 +45,7 @@ def publish_batch_messages(message_data_arr):
 
     for message_data in message_data_arr:
         # When you publish a message, the client returns a future.
-        api_future = client.publish(topic_path, data=message_data.encode(‘utf-8’))
+        api_future = client.publish(topic_path, data=message_data.encode('utf-8'))
         api_future.add_done_callback(get_callback(api_future, message_data))
 
     logging.info("Published messages successfully!")
